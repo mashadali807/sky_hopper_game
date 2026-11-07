@@ -5,7 +5,6 @@ import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import 'package:sky_hopper/game/system/collision_system.dart';
 import 'package:sky_hopper/game/system/obstacle_spawner.dart';
 import 'package:sky_hopper/game/system/score_system.dart';
@@ -19,17 +18,20 @@ import 'components/obstacle_pair.dart';
 import 'components/coin.dart';
 import 'components/scrolling_background.dart';
 import 'models/run_result.dart';
+import 'models/chracter_skin.dart'; // Added to recognize PlayerShape
 
 class SkyHopperGame extends FlameGame with TapCallbacks {
   SkyHopperGame({
     this.previousBest = 0,
     this.bodyColor = GameConfig.playerColor,
     this.accentColor = Colors.black87,
+    this.playerShape = PlayerShape.circle, // Added default shape
   });
 
   final int previousBest;
   final Color bodyColor;
   final Color accentColor;
+  final PlayerShape playerShape; // Added field
 
   AudioService? audio;
   bool vibrationEnabled = true;
@@ -84,15 +86,11 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
     // Make the camera viewport occupy all available game space.
     camera.viewport = MaxViewport();
 
-    // IMPORTANT:
     // Place the world origin at the top-left corner.
-    // Your game components use screen-style coordinates
-    // beginning at (0, 0).
     camera.viewfinder.anchor = Anchor.topLeft;
 
     _background = ScrollingBackground();
     _background.size.setValues(size.x, size.y);
-
     world.add(_background);
 
     _player = PlayerComponent(
@@ -102,8 +100,8 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
       ),
       bodyColor: bodyColor,
       accentColor: accentColor,
+      shape: playerShape, // Passed shape to PlayerComponent
     );
-
     world.add(_player);
 
     _spawner = ObstacleSpawner();
@@ -138,26 +136,24 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
     if (_state == GameState.ready) {
       _setState(GameState.playing);
       _player.applyJump();
-      audio?.playJump();
+      // Jump sound intentionally removed — only coin, hit, and music play.
       return;
     }
 
     if (_state == GameState.playing) {
       _player.applyJump();
-      audio?.playJump();
+      // Jump sound intentionally removed.
     }
   }
 
   void pauseRun() {
     if (_state != GameState.playing) return;
-
     _setState(GameState.paused);
     paused = true;
   }
 
   void resumeRun() {
     if (_state != GameState.paused) return;
-
     _setState(GameState.playing);
     paused = false;
   }
@@ -170,7 +166,6 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
     _score = 0;
     _coinsCollected = 0;
     _runTime = 0;
-
     _lastRunResult = RunResult.empty;
 
     scoreNotifier.value = 0;
@@ -188,7 +183,6 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
     _score = 0;
     _coinsCollected = 0;
     _runTime = 0;
-
     _lastRunResult = RunResult.empty;
 
     scoreNotifier.value = 0;
@@ -200,13 +194,11 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
 
   void _clearWorldEntities() {
     final obstacles = world.children.whereType<ObstaclePair>().toList();
-
     for (final obstacle in obstacles) {
       obstacle.removeFromParent();
     }
 
     final coins = world.children.whereType<CoinComponent>().toList();
-
     for (final coin in coins) {
       coin.removeFromParent();
     }
@@ -214,7 +206,6 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
 
   void _setState(GameState newState) {
     if (_state == newState) return;
-
     _state = newState;
     stateNotifier.value = newState;
   }
@@ -293,9 +284,14 @@ class SkyHopperGame extends FlameGame with TapCallbacks {
 
   @override
   void onRemove() {
-    stateNotifier.dispose();
-    scoreNotifier.dispose();
-    coinsNotifier.dispose();
+    // Detach audio so it doesn't keep a reference to this game.
+    audio = null;
+
+    // Explicitly remove world children so they don't leak references.
+    final worldChildren = world.children.toList(growable: false);
+    for (final child in worldChildren) {
+      child.removeFromParent();
+    }
 
     super.onRemove();
   }

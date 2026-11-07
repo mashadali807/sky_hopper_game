@@ -11,6 +11,9 @@ import '../game/game_config.dart';
 ///   is a silent no-op. The game never crashes because of audio.
 /// * Preferences gate every play call — flipping a setting takes effect
 ///   immediately, including stopping the currently-playing music.
+/// * `bgm.initialize()` is called only ONCE (guarded by `_bgmInitialized`).
+///   Re-calling it registers duplicate lifecycle observers and causes
+///   memory growth over repeated game sessions.
 class AudioService {
   AudioService({required this.musicEnabled, required this.soundEnabled});
 
@@ -19,8 +22,9 @@ class AudioService {
 
   bool _initialized = false;
   bool _musicPlaying = false;
+  bool _bgmInitialized = false;
 
-  /// Loads audio files. Safe to call multiple times.
+  /// Loads SFX files. Safe to call multiple times.
   Future<void> init() async {
     if (_initialized) return;
     try {
@@ -53,9 +57,23 @@ class AudioService {
   }
 
   Future<void> startMusic() async {
-    if (!_initialized || !musicEnabled || _musicPlaying) return;
+    if (!_initialized || !musicEnabled) return;
     try {
-      await FlameAudio.bgm.initialize();
+      // Initialize the bgm player only ONCE across the app's lifetime.
+      // Calling this repeatedly leaks lifecycle observers.
+      if (!_bgmInitialized) {
+        await FlameAudio.bgm.initialize();
+        _bgmInitialized = true;
+      }
+
+      // Stop any previous instance before starting a new one — this is the
+      // critical line that prevents overlapping background tracks when
+      // navigating between Home and Game screens multiple times.
+      if (_musicPlaying) {
+        await FlameAudio.bgm.stop();
+        _musicPlaying = false;
+      }
+
       await FlameAudio.bgm.play(
         GameConfig.musicBackground,
         volume: GameConfig.musicVolume,
@@ -93,5 +111,18 @@ class AudioService {
 
   Future<void> onAppResumed() async {
     if (musicEnabled) await startMusic();
+  }
+
+  /// Release the bgm player. Call only when the whole app is being torn down.
+  Future<void> dispose() async {
+    await stopMusic();
+    if (_bgmInitialized) {
+      try {
+        await FlameAudio.bgm.dispose();
+      } catch (e) {
+        debugPrint('BGM dispose failed: $e');
+      }
+      _bgmInitialized = false;
+    }
   }
 }

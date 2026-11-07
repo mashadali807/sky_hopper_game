@@ -1,7 +1,6 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import 'package:sky_hopper/game/models/chracter_skin.dart';
 import 'package:sky_hopper/service/audio_service.dart';
 import 'package:sky_hopper/service/local_storage_service.dart';
@@ -9,9 +8,6 @@ import 'package:sky_hopper/service/local_storage_service.dart';
 import '../game/game_config.dart';
 import '../game/game_state.dart';
 import '../game/sky_hopper_game.dart';
-
-import '../widgets/coin_display.dart';
-import '../widgets/score_display.dart';
 import 'game_over_overlay.dart';
 import 'pause_overlay.dart';
 
@@ -34,23 +30,20 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-
     WidgetsBinding.instance.addObserver(this);
 
     final skin = skinById(widget.storage.selectedSkin);
 
-    final game = SkyHopperGame(
+    _game = SkyHopperGame(
       previousBest: widget.storage.bestScore,
       bodyColor: skin.bodyColor,
       accentColor: skin.accentColor,
+      playerShape: skin.shape,
     );
-
-    _game = game;
-
-    game.onRunEnded = _handleRunEnded;
-    game.stateNotifier.addListener(_handleStateChange);
-    game.audio = widget.audio;
-    game.vibrationEnabled = widget.storage.vibrationEnabled;
+    _game!.onRunEnded = _handleRunEnded;
+    _game!.stateNotifier.addListener(_handleStateChange);
+    _game!.audio = widget.audio;
+    _game!.vibrationEnabled = widget.storage.vibrationEnabled;
 
     widget.audio.applyMusicPreference(widget.storage.musicEnabled);
   }
@@ -58,16 +51,10 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-
-    final game = _game;
-
-    if (game != null) {
-      game.onRunEnded = null;
-      game.stateNotifier.removeListener(_handleStateChange);
-    }
-
+    _game?.onRunEnded = null;
+    _game?.stateNotifier.removeListener(_handleStateChange);
     widget.audio.stopMusic();
-
+    _game = null;
     super.dispose();
   }
 
@@ -77,20 +64,12 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         widget.audio.onAppPaused();
-
         if (_game?.isPlaying == true) {
-          setState(() {
-            _overlay = _Overlay.pause;
-          });
-
+          setState(() => _overlay = _Overlay.pause);
           _game?.pauseRun();
         }
-        break;
-
       case AppLifecycleState.resumed:
         widget.audio.onAppResumed();
-        break;
-
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
         break;
@@ -102,67 +81,44 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     if (game == null) return;
 
     widget.audio.playHit();
-
-    if (widget.storage.vibrationEnabled) {
-      HapticFeedback.mediumImpact();
-    }
+    if (widget.storage.vibrationEnabled) HapticFeedback.mediumImpact();
 
     try {
       await widget.storage.addCoins(game.lastRunResult.coinsCollected);
-
       await widget.storage.recordScore(game.lastRunResult.score);
     } catch (e) {
       debugPrint('Persistence failed at game over: $e');
     }
 
     if (!mounted) return;
-
-    setState(() {
-      _overlay = _Overlay.gameOver;
-    });
+    setState(() => _overlay = _Overlay.gameOver);
   }
 
   void _handleStateChange() {
     if (!mounted) return;
 
-    if (_game?.state == GameState.playing &&
-        !widget.storage.hasSeenOnboardingHint) {
-      widget.storage.markOnboardingHintSeen();
-    }
+    // Removed the "markOnboardingHintSeen" logic so the hint shows every time.
 
     if (_game?.state != GameState.gameOver && _overlay == _Overlay.gameOver) {
-      setState(() {
-        _overlay = _Overlay.none;
-      });
+      setState(() => _overlay = _Overlay.none);
     }
   }
 
   void _onPausePressed() {
-    setState(() {
-      _overlay = _Overlay.pause;
-    });
-
+    setState(() => _overlay = _Overlay.pause);
     _game?.pauseRun();
     widget.audio.stopMusic();
   }
 
   void _onResumePressed() {
-    setState(() {
-      _overlay = _Overlay.none;
-    });
-
+    setState(() => _overlay = _Overlay.none);
     _game?.resumeRun();
-
     widget.audio.applyMusicPreference(widget.storage.musicEnabled);
   }
 
   void _onRestartPressed() {
-    setState(() {
-      _overlay = _Overlay.none;
-    });
-
+    setState(() => _overlay = _Overlay.none);
     _game?.restartRun();
-
     widget.audio.applyMusicPreference(widget.storage.musicEnabled);
   }
 
@@ -174,7 +130,6 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final game = _game;
-
     if (game == null) {
       return const Scaffold(body: SizedBox.shrink());
     }
@@ -183,10 +138,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       canPop: _overlay != _Overlay.none,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-
-        if (game.isPlaying) {
-          _onPausePressed();
-        }
+        if (game.isPlaying) _onPausePressed();
       },
       child: AnimatedBuilder(
         animation: game.stateNotifier,
@@ -196,107 +148,190 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
             body: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTapDown: (_) => game.handleTap(),
-              child: Stack(
-                children: [
-                  // Game fills the available screen area.
-                  Positioned.fill(
-                    child: GameWidget<SkyHopperGame>(
-                      game: game,
-                      errorBuilder: (context, error) {
-                        debugPrint('GAME CRASHED: $error');
-
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
+              child: SizedBox.expand(
+                child: Stack(
+                  children: [
+                    // --- The Game Canvas ---
+                    Positioned.fill(
+                      child: GameWidget<SkyHopperGame>(
+                        game: game,
+                        errorBuilder: (context, error) {
+                          debugPrint('GAME CRASHED: $error');
+                          return Center(
                             child: Text(
-                              'Game error:\n$error',
+                              'Game error: $error',
                               style: const TextStyle(color: Colors.red),
                               textAlign: TextAlign.center,
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-
-                  // Score, coins, and pause button.
-                  SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
+                          );
+                        },
                       ),
-                      child: Column(
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Center(
+                    ),
+
+                    // --- The HUD (Heads Up Display) ---
+                    SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 16,
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // --- SCORE (Top Center) ---
+                                Expanded(
+                                  child: Center(
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 24,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.3),
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.2),
+                                          width: 1.5,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(
+                                              0.1,
+                                            ),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      child: ValueListenableBuilder<int>(
+                                        valueListenable: game.scoreNotifier,
+                                        builder: (_, score, __) => Text(
+                                          '$score',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 42,
+                                            fontWeight: FontWeight.w900,
+                                            shadows: [
+                                              Shadow(
+                                                color: Colors.black26,
+                                                offset: Offset(0, 2),
+                                                blurRadius: 4,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                // --- COINS (Top Right) ---
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
                                   child: ValueListenableBuilder<int>(
-                                    valueListenable: game.scoreNotifier,
-                                    builder: (_, score, __) {
-                                      return ScoreDisplay(score: score);
-                                    },
+                                    valueListenable: game.coinsNotifier,
+                                    builder: (_, coins, __) => Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.3),
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.2),
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(
+                                            Icons.monetization_on,
+                                            color: Colors.amber,
+                                            size: 22,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            '$coins',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const Spacer(),
+
+                            // --- PAUSE BUTTON (Bottom Right) ---
+                            Align(
+                              alignment: Alignment.bottomRight,
+                              child: GestureDetector(
+                                onTap: game.isPlaying ? _onPausePressed : null,
+                                child: AnimatedOpacity(
+                                  opacity: game.isPlaying ? 1.0 : 0.5,
+                                  duration: const Duration(milliseconds: 200),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.9),
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.2),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Icon(
+                                      Icons.pause_rounded,
+                                      color: Color(0xFF1E3C72),
+                                      size: 32,
+                                    ),
                                   ),
                                 ),
                               ),
-                              ValueListenableBuilder<int>(
-                                valueListenable: game.coinsNotifier,
-                                builder: (_, coins, __) {
-                                  return CoinDisplay(coins: coins);
-                                },
-                              ),
-                            ],
-                          ),
-
-                          const Spacer(),
-
-                          Align(
-                            alignment: Alignment.bottomRight,
-                            child: FloatingActionButton.small(
-                              heroTag: 'pause',
-                              backgroundColor: Colors.white.withOpacity(0.8),
-                              onPressed: game.isPlaying
-                                  ? _onPausePressed
-                                  : null,
-                              child: const Icon(
-                                Icons.pause,
-                                color: Colors.black87,
-                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // First-run onboarding hint.
-                  if (game.state == GameState.ready &&
-                      !widget.storage.hasSeenOnboardingHint)
-                    const Positioned.fill(child: _OnboardingHint()),
-
-                  // Pause overlay.
-                  if (_overlay == _Overlay.pause)
-                    Positioned.fill(
-                      child: PauseOverlay(
-                        onResume: _onResumePressed,
-                        onRestart: _onRestartPressed,
-                        onHome: _onHomePressed,
+                          ],
+                        ),
                       ),
                     ),
 
-                  // Game-over overlay.
-                  if (_overlay == _Overlay.gameOver)
-                    Positioned.fill(
-                      child: GameOverOverlay(
-                        result: game.lastRunResult,
-                        bestScore: widget.storage.bestScore,
-                        onPlayAgain: _onRestartPressed,
-                        onHome: _onHomePressed,
+                    // --- Onboarding Hint ---
+                    // Changed condition to ONLY check if the game is ready.
+                    // This guarantees it shows on every new run.
+                    if (game.state == GameState.ready)
+                      const Positioned.fill(child: _OnboardingHint()),
+
+                    // --- Overlays ---
+                    if (_overlay == _Overlay.pause)
+                      Positioned.fill(
+                        child: PauseOverlay(
+                          onResume: _onResumePressed,
+                          onRestart: _onRestartPressed,
+                          onHome: _onHomePressed,
+                        ),
                       ),
-                    ),
-                ],
+                    if (_overlay == _Overlay.gameOver)
+                      Positioned.fill(
+                        child: GameOverOverlay(
+                          result: game.lastRunResult,
+                          bestScore: widget.storage.bestScore,
+                          onPlayAgain: _onRestartPressed,
+                          onHome: _onHomePressed,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           );
@@ -320,10 +355,9 @@ class _OnboardingHintState extends State<_OnboardingHint>
   @override
   void initState() {
     super.initState();
-
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
   }
 
@@ -338,28 +372,31 @@ class _OnboardingHintState extends State<_OnboardingHint>
     return IgnorePointer(
       child: Center(
         child: FadeTransition(
-          opacity: Tween<double>(begin: 0.5, end: 1.0).animate(_controller),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.touch_app,
-                size: 64,
-                color: Colors.white.withOpacity(0.9),
-                shadows: const [Shadow(color: Colors.black26, blurRadius: 8)],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'TAP TO FLY',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.9),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 3,
-                  shadows: const [Shadow(color: Colors.black26, blurRadius: 8)],
+          opacity: Tween<double>(begin: 0.4, end: 1.0).animate(
+            CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.4),
+              borderRadius: BorderRadius.circular(30),
+            ),
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.touch_app_rounded, size: 56, color: Colors.white),
+                SizedBox(height: 12),
+                Text(
+                  'TAP TO FLY',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
